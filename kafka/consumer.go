@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"strings"
 	"unsafe"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type Headers map[string][]byte
@@ -44,10 +46,14 @@ type Consumer interface {
 }
 
 type consumer struct {
-	handle    *handle
-	topics    []string
-	processor MessageProcessor
-	errChan   chan<- error
+	handle          *handle
+	topics          []string
+	processor       MessageProcessor
+	errChan         chan<- error
+	partitionWg     errgroup.Group
+	ctx             context.Context
+	partitionCtx    context.Context
+	partitionCancel context.CancelFunc
 }
 
 type handle struct {
@@ -60,9 +66,24 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 	partitions *C.rd_kafka_topic_partition_list_t, opaque unsafe.Pointer) {
 	switch cErr {
 	case C.RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS:
+		gConsumer.partitionCtx, gConsumer.partitionCancel = context.WithCancel(gConsumer.ctx)
 		C.rd_kafka_assign(kafkaHandle, partitions)
+
+		goPartitions := unsafe.Slice(partitions.elems, partitions.cnt)
+		for _, partition := range goPartitions {
+			tp := TopicPartition{
+				Topic:     C.GoString(partition.topic),
+				Partition: int(partition.partition),
+				Offset:    int64(partition.offset),
+			}
+			gConsumer.partitionWg.Go(func() error {
+				return gConsumer.readPartition(gConsumer.partitionCtx, tp)
+			})
+		}
 	case C.RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS:
-		C.rd_kafka_assign(kafkaHandle, partitions)
+		gConsumer.partitionCancel()
+		gConsumer.partitionWg.Wait()
+		C.rd_kafka_assign(kafkaHandle, nil)
 	default:
 		C.rd_kafka_assign(kafkaHandle, nil)
 	}
@@ -76,6 +97,10 @@ type Configuration struct {
 	LibKafkaConf map[string]interface{}
 }
 
+// kinda gross, but easy for now
+// share consumer with C to factor this away
+var gConsumer *consumer
+
 func NewConsumer(topics []string, goConf Configuration, processor MessageProcessor, errChan chan<- error) (*consumer, error) {
 	consumer := &consumer{
 		handle:    &handle{},
@@ -83,16 +108,17 @@ func NewConsumer(topics []string, goConf Configuration, processor MessageProcess
 		processor: processor,
 		errChan:   errChan,
 	}
+	gConsumer = consumer
 
 	conf, err := consumer.setupConf(goConf)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to configure consumer: %+v", err)
+		return nil, fmt.Errorf("failed to configure consumer: %+v", err)
 	}
 
 	cErr := C.malloc(C.size_t(128))
 	consumer.handle.client = C.rd_kafka_new(C.RD_KAFKA_CONSUMER, conf, (*C.char)(cErr), 128)
 	if consumer.handle.client == nil {
-		return nil, fmt.Errorf("Failed to create new consumer: %s\n", C.GoString((*C.char)(cErr)))
+		return nil, fmt.Errorf("failed to create new consumer: %s", C.GoString((*C.char)(cErr)))
 	}
 	C.free(cErr)
 
@@ -141,7 +167,53 @@ func (c *consumer) setupConf(goConf Configuration) (*C.struct_rd_kafka_conf_s, e
 	return conf, nil
 }
 
+func (c *consumer) readPartition(ctx context.Context, tp TopicPartition) error {
+	var q *C.struct_rd_kafka_queue_s = C.rd_kafka_queue_get_partition(c.handle.client, C.CString(tp.Topic), C.int(tp.Partition))
+	// disable forwarding to common consumer queue for subscribed partitions
+	C.rd_kafka_queue_forward(q, nil)
+
+	for {
+		select {
+		case <-ctx.Done():
+			// TODO: clean up properly here
+			C.rd_kafka_queue_destroy(q)
+			return nil
+		default:
+			event := C.rd_kafka_queue_poll(q, C.int(100))
+			eventType := C.rd_kafka_event_type(event)
+
+			switch eventType {
+			case C.RD_KAFKA_EVENT_NONE:
+				break
+			case C.RD_KAFKA_EVENT_FETCH:
+				cmessage := C.rd_kafka_event_message_next(event)
+				if cmessage != nil {
+					if cmessage.err != C.RD_KAFKA_RESP_ERR_NO_ERROR {
+						c.errChan <- fmt.Errorf(C.GoString(C.rd_kafka_err2str(cmessage.err)))
+						C.rd_kafka_message_destroy(cmessage)
+						continue
+					}
+					message, err := c.cToGoMessage(cmessage)
+					if err != nil {
+						fmt.Printf("error: %+v", err)
+						continue
+					}
+
+					c.processor.ProcessMessage(ctx, *message)
+					C.rd_kafka_message_destroy(cmessage)
+				}
+			default:
+				panic(fmt.Sprintf("unkonwn event type: %+v", eventType))
+			}
+		}
+	}
+
+	C.rd_kafka_queue_destroy(q)
+	return nil
+}
+
 func (c *consumer) Start(ctx context.Context) error {
+	c.ctx = ctx
 	// Subscribe to the list of topics
 	subscription := C.rd_kafka_topic_partition_list_new(C.int(len(c.topics)))
 	for _, t := range c.topics {
@@ -164,23 +236,10 @@ func (c *consumer) Start(ctx context.Context) error {
 			C.rd_kafka_destroy(c.handle.client)
 			return nil
 		default:
+			// general callbacks - logs, stats, etc
 			C.rd_kafka_poll(c.handle.client, 100)
-			cmessage := C.rd_kafka_consumer_poll(c.handle.client, 100)
-			if cmessage != nil {
-				if cmessage.err != C.RD_KAFKA_RESP_ERR_NO_ERROR {
-					c.errChan <- fmt.Errorf(C.GoString(C.rd_kafka_err2str(cmessage.err)))
-					C.rd_kafka_message_destroy(cmessage)
-					continue
-				}
-				message, err := c.cToGoMessage(cmessage)
-				if err != nil {
-					fmt.Printf("error: %+v", err)
-					continue
-				}
-
-				c.processor.ProcessMessage(ctx, *message)
-				C.rd_kafka_message_destroy(cmessage)
-			}
+			// consumer specific callbacks
+			C.rd_kafka_consumer_poll(c.handle.client, 100)
 		}
 	}
 }

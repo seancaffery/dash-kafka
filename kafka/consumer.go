@@ -128,23 +128,45 @@ func NewConsumer(topics []string, goConf Configuration, processor MessageProcess
 	return consumer, nil
 }
 
+func stringify(in interface{}) (string, error) {
+	value := ""
+	switch x := in.(type) {
+	case bool:
+		if x {
+			value = "true"
+		} else {
+			value = "false"
+		}
+	case int:
+		value = fmt.Sprintf("%d", x)
+	case string:
+		value = x
+	default:
+		return "", fmt.Errorf("invalid config type %T, %v", in, in)
+	}
+
+	return value, nil
+}
+
 func (c *consumer) setupConf(goConf Configuration) (*C.struct_rd_kafka_conf_s, error) {
 	allBrokers := strings.Join(goConf.Brokers, ",")
-	brokers := C.CString(allBrokers)
-	groupID := C.CString(goConf.GroupID)
 	cErr := C.malloc(C.size_t(128))
 
 	conf := C.rd_kafka_conf_new()
 
 	rdKafkaKeyMap := map[string]interface{}{
-		"bootstrap.servers": brokers,
-		"group.id":          groupID,
+		"bootstrap.servers": allBrokers,
+		"group.id":          goConf.GroupID,
 		// Disable the Nagle algorithm (TCP_NODELAY) on broker sockets.
 		"socket.nagle.disable": true,
 	}
 
 	for k, v := range rdKafkaKeyMap {
-		if C.rd_kafka_conf_set(conf, C.CString(k), v.(*C.char), (*C.char)(cErr), 128) != C.RD_KAFKA_CONF_OK {
+		strVal, err := stringify(v)
+		if err != nil {
+			return nil, err
+		}
+		if C.rd_kafka_conf_set(conf, C.CString(k), C.CString(strVal), (*C.char)(cErr), 128) != C.RD_KAFKA_CONF_OK {
 			C.rd_kafka_conf_destroy(conf)
 			goErrString := C.GoString((*C.char)(cErr))
 			C.free(cErr)
@@ -153,7 +175,11 @@ func (c *consumer) setupConf(goConf Configuration) (*C.struct_rd_kafka_conf_s, e
 	}
 
 	for k, v := range goConf.LibKafkaConf {
-		if C.rd_kafka_conf_set(conf, C.CString(k), v.(*C.char), (*C.char)(cErr), 128) != C.RD_KAFKA_CONF_OK {
+		strVal, err := stringify(v)
+		if err != nil {
+			return nil, err
+		}
+		if C.rd_kafka_conf_set(conf, C.CString(k), C.CString(strVal), (*C.char)(cErr), 128) != C.RD_KAFKA_CONF_OK {
 			C.rd_kafka_conf_destroy(conf)
 			goErrString := C.GoString((*C.char)(cErr))
 			C.free(cErr)

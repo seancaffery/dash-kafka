@@ -36,23 +36,6 @@ func goDrCb(kafkaHandle *C.rd_kafka_t, kafkaMessage *C.rd_kafka_message_t, opaqu
 	fmt.Printf("DR: %s %s\n", string(message.Key), string(message.Message))
 }
 
-func cToGoMessage(cMessage *C.rd_kafka_message_t) (*ConsumerMessage, error) {
-	topicPartition := &TopicPartition{
-		Partition: int(cMessage.partition),
-		Offset:    int64(cMessage.offset),
-	}
-	// headers, err := cToGoHeaders(cMessage)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	messageBytes := C.GoBytes(unsafe.Pointer(cMessage.payload), C.int(cMessage.len))
-	return &ConsumerMessage{
-		Message:        messageBytes,
-		TopicPartition: topicPartition,
-		// Headers:        headers,
-	}, nil
-}
-
 func NewProducer(goConf ProducerConfiguration) (*producer, error) {
 	producer := &producer{
 		handle: &handle{},

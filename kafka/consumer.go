@@ -3,14 +3,11 @@ package kafka
 /*
 #include <librdkafka/rdkafka.h>
 #include <stdlib.h>
-
-extern void rebalanceCgo(rd_kafka_t *rk, rd_kafka_resp_err_t err, rd_kafka_topic_partition_list_t *partitions, void *opaque);
 */
 import "C"
 import (
 	"context"
 	"fmt"
-	"strings"
 	"unsafe"
 
 	"golang.org/x/sync/errgroup"
@@ -89,19 +86,11 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 	}
 }
 
-type Configuration struct {
-	Brokers []string
-	GroupID string
-	// Configuration passed directly to librdkafka
-	// Provides an escape hatch for configuration not directly exposed. Prefer to add explicit configuration.
-	LibKafkaConf map[string]interface{}
-}
-
 // kinda gross, but easy for now
 // share consumer with C to factor this away
 var gConsumer *consumer
 
-func NewConsumer(topics []string, goConf Configuration, processor MessageProcessor, errChan chan<- error) (*consumer, error) {
+func NewConsumer(topics []string, goConf ConsumerConfiguration, processor MessageProcessor, errChan chan<- error) (*consumer, error) {
 	consumer := &consumer{
 		handle:    &handle{},
 		topics:    topics,
@@ -110,7 +99,7 @@ func NewConsumer(topics []string, goConf Configuration, processor MessageProcess
 	}
 	gConsumer = consumer
 
-	conf, err := consumer.setupConf(goConf)
+	conf, err := goConf.setup()
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure consumer: %+v", err)
 	}
@@ -126,71 +115,6 @@ func NewConsumer(topics []string, goConf Configuration, processor MessageProcess
 	conf = nil
 
 	return consumer, nil
-}
-
-func stringify(in interface{}) (string, error) {
-	value := ""
-	switch x := in.(type) {
-	case bool:
-		if x {
-			value = "true"
-		} else {
-			value = "false"
-		}
-	case int:
-		value = fmt.Sprintf("%d", x)
-	case string:
-		value = x
-	default:
-		return "", fmt.Errorf("invalid config type %T, %v", in, in)
-	}
-
-	return value, nil
-}
-
-func (c *consumer) setupConf(goConf Configuration) (*C.struct_rd_kafka_conf_s, error) {
-	allBrokers := strings.Join(goConf.Brokers, ",")
-	cErr := C.malloc(C.size_t(128))
-
-	conf := C.rd_kafka_conf_new()
-
-	rdKafkaKeyMap := map[string]interface{}{
-		"bootstrap.servers": allBrokers,
-		"group.id":          goConf.GroupID,
-		// Disable the Nagle algorithm (TCP_NODELAY) on broker sockets.
-		"socket.nagle.disable": true,
-	}
-
-	for k, v := range rdKafkaKeyMap {
-		strVal, err := stringify(v)
-		if err != nil {
-			return nil, err
-		}
-		if C.rd_kafka_conf_set(conf, C.CString(k), C.CString(strVal), (*C.char)(cErr), 128) != C.RD_KAFKA_CONF_OK {
-			C.rd_kafka_conf_destroy(conf)
-			goErrString := C.GoString((*C.char)(cErr))
-			C.free(cErr)
-			return nil, fmt.Errorf("could not set %s: %+v", k, goErrString)
-		}
-	}
-
-	for k, v := range goConf.LibKafkaConf {
-		strVal, err := stringify(v)
-		if err != nil {
-			return nil, err
-		}
-		if C.rd_kafka_conf_set(conf, C.CString(k), C.CString(strVal), (*C.char)(cErr), 128) != C.RD_KAFKA_CONF_OK {
-			C.rd_kafka_conf_destroy(conf)
-			goErrString := C.GoString((*C.char)(cErr))
-			C.free(cErr)
-			return nil, fmt.Errorf("could not set %s: %+v", k, goErrString)
-		}
-	}
-
-	// Go being Go https://github.com/golang/go/issues/19835
-	C.rd_kafka_conf_set_rebalance_cb(conf, (*[0]byte)(C.rebalanceCgo))
-
-	return conf, nil
 }
 
 func (c *consumer) readPartition(ctx context.Context, tp TopicPartition) error {

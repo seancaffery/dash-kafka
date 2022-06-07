@@ -3,14 +3,11 @@ package kafka
 /*
 #include <librdkafka/rdkafka.h>
 #include <stdlib.h>
-
-extern void drCbCgo(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque);
 */
 import "C"
 import (
 	"context"
 	"fmt"
-	"strings"
 	"unsafe"
 )
 
@@ -56,12 +53,12 @@ func cToGoMessage(cMessage *C.rd_kafka_message_t) (*ConsumerMessage, error) {
 	}, nil
 }
 
-func NewProducer(goConf Configuration) (*producer, error) {
+func NewProducer(goConf ProducerConfiguration) (*producer, error) {
 	producer := &producer{
 		handle: &handle{},
 	}
 
-	conf, err := producer.setupConf(goConf)
+	conf, err := goConf.setup()
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure consumer: %+v", err)
 	}
@@ -77,52 +74,6 @@ func NewProducer(goConf Configuration) (*producer, error) {
 	conf = nil
 
 	return producer, nil
-}
-
-func (c *producer) setupConf(goConf Configuration) (*C.struct_rd_kafka_conf_s, error) {
-	allBrokers := strings.Join(goConf.Brokers, ",")
-	cErr := C.malloc(C.size_t(128))
-
-	conf := C.rd_kafka_conf_new()
-
-	rdKafkaKeyMap := map[string]interface{}{
-		"bootstrap.servers": allBrokers,
-		// Disable the Nagle algorithm (TCP_NODELAY) on broker sockets.
-		"socket.nagle.disable": true,
-	}
-
-	for k, v := range rdKafkaKeyMap {
-		strVal, err := stringify(v)
-		if err != nil {
-			return nil, err
-		}
-		if C.rd_kafka_conf_set(conf, C.CString(k), C.CString(strVal), (*C.char)(cErr), 128) != C.RD_KAFKA_CONF_OK {
-			C.rd_kafka_conf_destroy(conf)
-			goErrString := C.GoString((*C.char)(cErr))
-			C.free(cErr)
-			return nil, fmt.Errorf("could not set %s: %+v", k, goErrString)
-		}
-	}
-
-	for k, v := range goConf.LibKafkaConf {
-		strVal, err := stringify(v)
-		if err != nil {
-			return nil, err
-		}
-		if C.rd_kafka_conf_set(conf, C.CString(k), C.CString(strVal), (*C.char)(cErr), 128) != C.RD_KAFKA_CONF_OK {
-			C.rd_kafka_conf_destroy(conf)
-			goErrString := C.GoString((*C.char)(cErr))
-			C.free(cErr)
-			return nil, fmt.Errorf("could not set %s: %+v", k, goErrString)
-		}
-	}
-
-	// * The callback is only triggered from rd_kafka_poll() and
-	// * rd_kafka_flush().
-	// Go being Go https://github.com/golang/go/issues/19835
-	C.rd_kafka_conf_set_dr_msg_cb(conf, (*[0]byte)(C.drCbCgo))
-
-	return conf, nil
 }
 
 func (p *producer) Start(ctx context.Context) error {

@@ -7,5 +7,11 @@ extern void goRebalance(rd_kafka_t*, rd_kafka_resp_err_t, rd_kafka_topic_partiti
 void rebalanceCgo(rd_kafka_t *rk, rd_kafka_resp_err_t err, rd_kafka_topic_partition_list_t *partitions, void *opaque) {
   goRebalance(rk, err, partitions, opaque);
 }
+
+extern void goDrCb(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque);
+
+void drCbCgo(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque) {
+  goDrCb(rk, rkmessage, opaque);
+}
 */
 import "C"

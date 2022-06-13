@@ -18,8 +18,10 @@ type producer struct {
 }
 
 type ProducerMessage struct {
-	Message []byte
-	Key     []byte
+	Message        []byte
+	Key            []byte
+	Headers        Headers
+	TopicPartition *TopicPartition
 }
 
 //export goDrCb
@@ -76,9 +78,9 @@ func (p *producer) Start(ctx context.Context) error {
 	return nil
 }
 
-func (p *producer) Produce(tp TopicPartition, message ProducerMessage) error {
-	partition := C.int(tp.Partition)
-	topic := C.rd_kafka_topic_new(p.handle.client, C.CString(tp.Topic), nil)
+func (p *producer) Produce(message ProducerMessage) error {
+	partition := C.int(message.TopicPartition.Partition)
+	topic := C.rd_kafka_topic_new(p.handle.client, C.CString(message.TopicPartition.Topic), nil)
 	result := C.rd_kafka_produce(
 		topic,
 		partition,

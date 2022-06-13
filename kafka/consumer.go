@@ -39,6 +39,8 @@ func (f MessageProcessorFunc) ProcessMessage(ctx context.Context, message Consum
 	return f(ctx, message)
 }
 
+type ConsumerInterceptor func(MessageProcessor) MessageProcessor
+
 type Consumer interface {
 }
 
@@ -115,6 +117,12 @@ func NewConsumer(topics []string, goConf ConsumerConfiguration, processor Messag
 	conf = nil
 
 	return consumer, nil
+}
+
+func (c *consumer) AddConsumerInterceptor(interceptors ...ConsumerInterceptor) {
+	for _, interceptor := range interceptors {
+		c.processor = interceptor(c.processor)
+	}
 }
 
 func (c *consumer) readPartition(ctx context.Context, tp TopicPartition) error {

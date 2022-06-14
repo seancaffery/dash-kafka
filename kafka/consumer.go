@@ -8,6 +8,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"runtime/cgo"
 	"unsafe"
 
 	"golang.org/x/sync/errgroup"
@@ -53,6 +54,7 @@ type consumer struct {
 	ctx             context.Context
 	partitionCtx    context.Context
 	partitionCancel context.CancelFunc
+	cMap            map[string]interface{}
 }
 
 type handle struct {
@@ -63,9 +65,12 @@ type handle struct {
 //export goRebalance
 func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 	partitions *C.rd_kafka_topic_partition_list_t, opaque unsafe.Pointer) {
+	cMap := cgo.Handle(opaque).Value().(map[string]interface{})
+	consumerRef := cMap["consumer"].(*consumer)
+
 	switch cErr {
 	case C.RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS:
-		gConsumer.partitionCtx, gConsumer.partitionCancel = context.WithCancel(gConsumer.ctx)
+		consumerRef.partitionCtx, consumerRef.partitionCancel = context.WithCancel(consumerRef.ctx)
 		C.rd_kafka_assign(kafkaHandle, partitions)
 
 		goPartitions := unsafe.Slice(partitions.elems, partitions.cnt)
@@ -75,33 +80,39 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 				Partition: int(partition.partition),
 				Offset:    int64(partition.offset),
 			}
-			gConsumer.partitionWg.Go(func() error {
-				return gConsumer.readPartition(gConsumer.partitionCtx, tp)
+			consumerRef.partitionWg.Go(func() error {
+				return consumerRef.readPartition(consumerRef.partitionCtx, tp)
 			})
 		}
 	case C.RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS:
-		gConsumer.partitionCancel()
-		gConsumer.partitionWg.Wait()
+		consumerRef.partitionCancel()
+		consumerRef.partitionWg.Wait()
 		C.rd_kafka_assign(kafkaHandle, nil)
 	default:
 		C.rd_kafka_assign(kafkaHandle, nil)
 	}
 }
 
-// kinda gross, but easy for now
-// share consumer with C to factor this away
-var gConsumer *consumer
+const KAFKA_FREE_STATS_JSON int = 0
+
+//export goStatsCb
+func goStatsCb(kafkaHandle *C.rd_kafka_t, json *C.char, len C.size_t, opaque unsafe.Pointer) int {
+	fmt.Printf("STATS: %+v", C.GoString(json))
+	return KAFKA_FREE_STATS_JSON
+}
 
 func NewConsumer(topics []string, goConf ConsumerConfiguration, processor MessageProcessor, errChan chan<- error) (*consumer, error) {
+	cMap := map[string]interface{}{}
 	consumer := &consumer{
 		handle:    &handle{},
 		topics:    topics,
 		processor: processor,
 		errChan:   errChan,
+		cMap:      cMap,
 	}
-	gConsumer = consumer
+	cMap["consumer"] = consumer
 
-	conf, err := goConf.setup()
+	conf, err := goConf.setup(cMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure consumer: %+v", err)
 	}

@@ -10,6 +10,7 @@ extern void drCbCgo(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *o
 import "C"
 import (
 	"fmt"
+	"runtime/cgo"
 	"strings"
 	"unsafe"
 )
@@ -68,7 +69,7 @@ func setCConf(values map[string]interface{}, kafkaConf *C.struct_rd_kafka_conf_s
 	return nil
 }
 
-func (conf *ConsumerConfiguration) setup() (*C.struct_rd_kafka_conf_s, error) {
+func (conf *ConsumerConfiguration) setup(cMap map[string]interface{}) (*C.struct_rd_kafka_conf_s, error) {
 	allBrokers := strings.Join(conf.Brokers, ",")
 	cErr := C.malloc(C.size_t(128))
 
@@ -90,6 +91,8 @@ func (conf *ConsumerConfiguration) setup() (*C.struct_rd_kafka_conf_s, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	C.rd_kafka_conf_set_opaque(cconf, unsafe.Pointer(cgo.NewHandle(cMap)))
 
 	// Go being Go https://github.com/golang/go/issues/19835
 	C.rd_kafka_conf_set_rebalance_cb(cconf, (*[0]byte)(C.rebalanceCgo))

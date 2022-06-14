@@ -97,7 +97,9 @@ const KAFKA_FREE_STATS_JSON int = 0
 
 //export goStatsCb
 func goStatsCb(kafkaHandle *C.rd_kafka_t, json *C.char, len C.size_t, opaque unsafe.Pointer) int {
-	fmt.Printf("STATS: %+v", C.GoString(json))
+	cMap := cgo.Handle(opaque).Value().(map[string]interface{})
+	statsFunc := cMap["stats"].(StatisticsCallback)
+	statsFunc(C.GoString(json))
 	return KAFKA_FREE_STATS_JSON
 }
 
@@ -111,6 +113,7 @@ func NewConsumer(topics []string, goConf ConsumerConfiguration, processor Messag
 		cMap:      cMap,
 	}
 	cMap["consumer"] = consumer
+	cMap["stats"] = goConf.StatisticsCallback
 
 	conf, err := goConf.setup(cMap)
 	if err != nil {

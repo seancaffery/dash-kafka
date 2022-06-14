@@ -6,6 +6,7 @@ package kafka
 
 extern void rebalanceCgo(rd_kafka_t *rk, rd_kafka_resp_err_t err, rd_kafka_topic_partition_list_t *partitions, void *opaque);
 extern void drCbCgo(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque);
+extern int statsCb(rd_kafka_t *rk, char *json, size_t json_len, void *opaque);
 */
 import "C"
 import (
@@ -15,11 +16,15 @@ import (
 	"unsafe"
 )
 
+type StatisticsCallback func(statsJSON string)
+
 type SharedConfiguration struct {
 	Brokers []string
 	// Configuration passed directly to librdkafka
 	// Provides an escape hatch for configuration not directly exposed. Prefer to add explicit configuration.
-	LibKafkaConf map[string]interface{}
+	LibKafkaConf       map[string]interface{}
+	StatisticsInterval int
+	StatisticsCallback StatisticsCallback
 }
 
 type ConsumerConfiguration struct {
@@ -79,7 +84,8 @@ func (conf *ConsumerConfiguration) setup(cMap map[string]interface{}) (*C.struct
 		"bootstrap.servers": allBrokers,
 		"group.id":          conf.GroupID,
 		// Disable the Nagle algorithm (TCP_NODELAY) on broker sockets.
-		"socket.nagle.disable": true,
+		"socket.nagle.disable":   true,
+		"statistics.interval.ms": conf.StatisticsInterval,
 	}
 
 	err := setCConf(rdKafkaKeyMap, cconf, cErr)
@@ -96,6 +102,10 @@ func (conf *ConsumerConfiguration) setup(cMap map[string]interface{}) (*C.struct
 
 	// Go being Go https://github.com/golang/go/issues/19835
 	C.rd_kafka_conf_set_rebalance_cb(cconf, (*[0]byte)(C.rebalanceCgo))
+
+	if conf.StatisticsInterval > 0 && conf.StatisticsCallback != nil {
+		C.rd_kafka_conf_set_stats_cb(cconf, (*[0]byte)(C.statsCb))
+	}
 
 	return cconf, nil
 }

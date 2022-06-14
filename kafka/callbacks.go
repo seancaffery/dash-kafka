@@ -13,5 +13,10 @@ extern void goDrCb(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *op
 void drCbCgo(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque) {
   goDrCb(rk, rkmessage, opaque);
 }
+
+extern int goStatsCb(rd_kafka_t *rk, char *json, size_t json_len, void *opaque);
+int statsCb(rd_kafka_t *rk, char *json, size_t json_len, void *opaque) {
+  return goStatsCb(rk, json, json_len, opaque);
+}
 */
 import "C"

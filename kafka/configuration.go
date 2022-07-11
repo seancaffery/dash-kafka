@@ -84,8 +84,10 @@ func (conf *ConsumerConfiguration) setup(cMap map[string]interface{}) (*C.struct
 		"bootstrap.servers": allBrokers,
 		"group.id":          conf.GroupID,
 		// Disable the Nagle algorithm (TCP_NODELAY) on broker sockets.
-		"socket.nagle.disable":   true,
-		"statistics.interval.ms": conf.StatisticsInterval,
+		"socket.nagle.disable":    true,
+		"statistics.interval.ms":  conf.StatisticsInterval,
+		"client.software.name":    "dash-kafka",
+		"client.software.version": "v0.1",
 	}
 
 	err := setCConf(rdKafkaKeyMap, cconf, cErr)
@@ -119,7 +121,9 @@ func (conf *ProducerConfiguration) setup() (*C.struct_rd_kafka_conf_s, error) {
 	rdKafkaKeyMap := map[string]interface{}{
 		"bootstrap.servers": allBrokers,
 		// Disable the Nagle algorithm (TCP_NODELAY) on broker sockets.
-		"socket.nagle.disable": true,
+		"socket.nagle.disable":    true,
+		"client.software.name":    "dash-kafka",
+		"client.software.version": "v0.1",
 	}
 
 	err := setCConf(rdKafkaKeyMap, cconf, cErr)

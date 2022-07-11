@@ -15,6 +15,7 @@ type Producer struct{}
 
 type producer struct {
 	handle *handle
+	cMap   map[string]interface{}
 }
 
 type ProducerMessage struct {
@@ -39,11 +40,14 @@ func goDrCb(kafkaHandle *C.rd_kafka_t, kafkaMessage *C.rd_kafka_message_t, opaqu
 }
 
 func NewProducer(goConf ProducerConfiguration) (*producer, error) {
+	cMap := map[string]interface{}{}
 	producer := &producer{
 		handle: &handle{},
+		cMap:   cMap,
 	}
+	cMap["stats"] = goConf.StatisticsCallback
 
-	conf, err := goConf.setup()
+	conf, err := goConf.setup(cMap)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure consumer: %+v", err)
 	}

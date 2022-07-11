@@ -112,7 +112,7 @@ func (conf *ConsumerConfiguration) setup(cMap map[string]interface{}) (*C.struct
 	return cconf, nil
 }
 
-func (conf *ProducerConfiguration) setup() (*C.struct_rd_kafka_conf_s, error) {
+func (conf *ProducerConfiguration) setup(cMap map[string]interface{}) (*C.struct_rd_kafka_conf_s, error) {
 	allBrokers := strings.Join(conf.Brokers, ",")
 	cErr := C.malloc(C.size_t(128))
 
@@ -122,6 +122,7 @@ func (conf *ProducerConfiguration) setup() (*C.struct_rd_kafka_conf_s, error) {
 		"bootstrap.servers": allBrokers,
 		// Disable the Nagle algorithm (TCP_NODELAY) on broker sockets.
 		"socket.nagle.disable":    true,
+		"statistics.interval.ms":  conf.StatisticsInterval,
 		"client.software.name":    "dash-kafka",
 		"client.software.version": "v0.1",
 	}
@@ -136,10 +137,16 @@ func (conf *ProducerConfiguration) setup() (*C.struct_rd_kafka_conf_s, error) {
 		return nil, err
 	}
 
+	C.rd_kafka_conf_set_opaque(cconf, unsafe.Pointer(cgo.NewHandle(cMap)))
+
 	// * The callback is only triggered from rd_kafka_poll() and
 	// * rd_kafka_flush().
 	// Go being Go https://github.com/golang/go/issues/19835
 	C.rd_kafka_conf_set_dr_msg_cb(cconf, (*[0]byte)(C.drCbCgo))
+
+	if conf.StatisticsInterval > 0 && conf.StatisticsCallback != nil {
+		C.rd_kafka_conf_set_stats_cb(cconf, (*[0]byte)(C.statsCb))
+	}
 
 	return cconf, nil
 }

@@ -100,7 +100,8 @@ func (conf *ConsumerConfiguration) setup(cMap map[string]interface{}) (*C.struct
 		return nil, err
 	}
 
-	C.rd_kafka_conf_set_opaque(cconf, unsafe.Pointer(cgo.NewHandle(cMap)))
+	mapHandle := cgo.NewHandle(cMap)
+	C.rd_kafka_conf_set_opaque(cconf, unsafe.Pointer(&mapHandle))
 
 	// Go being Go https://github.com/golang/go/issues/19835
 	C.rd_kafka_conf_set_rebalance_cb(cconf, (*[0]byte)(C.rebalanceCgo))
@@ -137,7 +138,8 @@ func (conf *ProducerConfiguration) setup(cMap map[string]interface{}) (*C.struct
 		return nil, err
 	}
 
-	C.rd_kafka_conf_set_opaque(cconf, unsafe.Pointer(cgo.NewHandle(cMap)))
+	mapHandle := cgo.NewHandle(cMap)
+	C.rd_kafka_conf_set_opaque(cconf, unsafe.Pointer(&mapHandle))
 
 	// * The callback is only triggered from rd_kafka_poll() and
 	// * rd_kafka_flush().

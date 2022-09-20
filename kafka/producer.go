@@ -79,7 +79,6 @@ func (p *producer) Start(ctx context.Context) error {
 			C.rd_kafka_poll(p.handle.client, 100)
 		}
 	}
-	return nil
 }
 
 func (p *producer) Produce(message ProducerMessage) error {

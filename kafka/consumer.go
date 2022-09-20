@@ -179,9 +179,6 @@ func (c *consumer) readPartition(ctx context.Context, tp TopicPartition) error {
 			}
 		}
 	}
-
-	C.rd_kafka_queue_destroy(q)
-	return nil
 }
 
 func (c *consumer) Start(ctx context.Context) error {

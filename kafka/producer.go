@@ -82,11 +82,12 @@ func (p *producer) Start(ctx context.Context) error {
 }
 
 func (p *producer) Produce(message ProducerMessage) error {
-	partition := C.int(message.TopicPartition.Partition)
 	topic := C.rd_kafka_topic_new(p.handle.client, C.CString(message.TopicPartition.Topic), nil)
 	result := C.rd_kafka_produce(
 		topic,
-		partition,
+		// Use default partitioner
+		C.RD_KAFKA_PARTITION_UA,
+		// rdkafka will make a copy of the payload
 		C.RD_KAFKA_MSG_F_COPY,
 		unsafe.Pointer(&message.Message[0]),
 		C.size_t(len(message.Message)),

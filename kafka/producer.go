@@ -69,7 +69,7 @@ func (p *producer) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("shutting down")
+			fmt.Println("shutting down producer")
 			// send any queued messages to the broker
 			C.rd_kafka_flush(p.handle.client, C.int(1000))
 			C.rd_kafka_destroy(p.handle.client)

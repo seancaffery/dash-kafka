@@ -52,5 +52,6 @@ func cToGoMessage(cMessage *C.rd_kafka_message_t) (*ConsumerMessage, error) {
 		Message:        messageBytes,
 		TopicPartition: topicPartition,
 		Headers:        headers,
+		Err:            make(chan error, 1),
 	}, nil
 }

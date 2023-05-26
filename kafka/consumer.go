@@ -21,7 +21,8 @@ type ConsumerMessage struct {
 	Message        []byte
 	Headers        Headers
 	TopicPartition *TopicPartition
-	Err            error
+	Err            chan error
+	cMessageHandle *C.rd_kafka_message_t
 }
 
 type TopicPartition struct {
@@ -73,6 +74,12 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 		consumerRef.partitionCtx, consumerRef.partitionCancel = context.WithCancel(consumerRef.ctx)
 		C.rd_kafka_assign(kafkaHandle, partitions)
 
+		processor := newConcurrentProcessor(consumerRef.partitionCtx, 3, consumerRef.processor)
+		processor.Start(consumerRef.partitionCtx)
+		go func() {
+			consumerRef.partitionMessageListener(consumerRef.partitionCtx, processor)
+		}()
+
 		goPartitions := unsafe.Slice(partitions.elems, partitions.cnt)
 		for _, partition := range goPartitions {
 			tp := TopicPartition{
@@ -81,7 +88,7 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 				Offset:    int64(partition.offset),
 			}
 			consumerRef.partitionWg.Go(func() error {
-				return consumerRef.readPartition(consumerRef.partitionCtx, tp)
+				return consumerRef.readPartition(consumerRef.partitionCtx, tp, processor)
 			})
 		}
 	case C.RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS:
@@ -139,7 +146,33 @@ func (c *consumer) AddConsumerInterceptor(interceptors ...ConsumerInterceptor) {
 	}
 }
 
-func (c *consumer) readPartition(ctx context.Context, tp TopicPartition) error {
+func (c *consumer) commitMessage(message *ConsumerMessage) {
+	C.rd_kafka_commit_message(c.handle.client, message.cMessageHandle, C.int(0))
+	C.rd_kafka_message_destroy(message.cMessageHandle)
+}
+
+func (c *consumer) partitionMessageListener(ctx context.Context, processor *concurrentProcessor) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case message := <-processor.Serialization():
+
+			if ctx.Err() != nil {
+				return
+			}
+
+			err := <-message.Err
+			if err != nil {
+				return
+			}
+
+			c.commitMessage(message)
+		}
+	}
+}
+
+func (c *consumer) readPartition(ctx context.Context, tp TopicPartition, processor *concurrentProcessor) error {
 	var q *C.struct_rd_kafka_queue_s = C.rd_kafka_queue_get_partition(c.handle.client, C.CString(tp.Topic), C.int(tp.Partition))
 	// disable forwarding to common consumer queue for subscribed partitions
 	C.rd_kafka_queue_forward(q, nil)
@@ -171,8 +204,8 @@ func (c *consumer) readPartition(ctx context.Context, tp TopicPartition) error {
 						continue
 					}
 
-					c.processor.ProcessMessage(ctx, *message)
-					C.rd_kafka_message_destroy(cmessage)
+					message.cMessageHandle = cmessage
+					processor.Enqueue(ctx, message)
 				}
 			default:
 				panic(fmt.Sprintf("unkonwn event type: %+v", eventType))
@@ -200,7 +233,7 @@ func (c *consumer) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Printf("shutting down")
+			fmt.Println("shutting down consumer")
 			C.rd_kafka_consumer_close(c.handle.client)
 			C.rd_kafka_destroy(c.handle.client)
 			return nil

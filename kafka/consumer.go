@@ -46,16 +46,20 @@ type ConsumerInterceptor func(MessageProcessor) MessageProcessor
 type Consumer interface {
 }
 
+type assignment struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
+	errGroup errgroup.Group
+}
+
 type consumer struct {
-	handle          *handle
-	topics          []string
-	processor       MessageProcessor
-	errChan         chan<- error
-	partitionWg     errgroup.Group
-	ctx             context.Context
-	partitionCtx    context.Context
-	partitionCancel context.CancelFunc
-	cMap            map[string]interface{}
+	handle      *handle
+	topics      []string
+	processor   MessageProcessor
+	errChan     chan<- error
+	ctx         context.Context
+	cMap        map[string]interface{}
+	assignments map[string]assignment
 }
 
 type handle struct {
@@ -68,32 +72,45 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 	partitions *C.rd_kafka_topic_partition_list_t, opaque unsafe.Pointer) {
 	cMap := cgo.Handle(opaque).Value().(map[string]interface{})
 	consumerRef := cMap["consumer"].(*consumer)
+	goPartitions := unsafe.Slice(partitions.elems, partitions.cnt)
 
 	switch cErr {
 	case C.RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS:
-		consumerRef.partitionCtx, consumerRef.partitionCancel = context.WithCancel(consumerRef.ctx)
 		C.rd_kafka_assign(kafkaHandle, partitions)
 
-		processor := newConcurrentProcessor(consumerRef.partitionCtx, 3, consumerRef.processor)
-		processor.Start(consumerRef.partitionCtx)
-		go func() {
-			consumerRef.partitionMessageListener(consumerRef.partitionCtx, processor)
-		}()
-
-		goPartitions := unsafe.Slice(partitions.elems, partitions.cnt)
 		for _, partition := range goPartitions {
+			topic := C.GoString(partition.topic)
+			assignmentName := fmt.Sprintf("%s%d", topic, int(partition.partition))
 			tp := TopicPartition{
-				Topic:     C.GoString(partition.topic),
+				Topic:     topic,
 				Partition: int(partition.partition),
 				Offset:    int64(partition.offset),
 			}
-			consumerRef.partitionWg.Go(func() error {
-				return consumerRef.readPartition(consumerRef.partitionCtx, tp, processor)
+			partitionCtx, partitionCancel := context.WithCancel(consumerRef.ctx)
+			assignment := assignment{
+				ctx:    partitionCtx,
+				cancel: partitionCancel,
+			}
+			consumerRef.assignments[assignmentName] = assignment
+			processor := newConcurrentProcessor(partitionCtx, 3, consumerRef.processor)
+			assignment.errGroup.Go(func() error {
+				return consumerRef.readPartition(partitionCtx, tp, processor)
 			})
+
+			assignment.errGroup.Go(func() error {
+				consumerRef.partitionMessageListener(partitionCtx, processor)
+				return nil
+			})
+			processor.Start(partitionCtx)
 		}
 	case C.RD_KAFKA_RESP_ERR__REVOKE_PARTITIONS:
-		consumerRef.partitionCancel()
-		consumerRef.partitionWg.Wait()
+		for _, partition := range goPartitions {
+			topic := C.GoString(partition.topic)
+			assignmentName := fmt.Sprintf("%s%d", topic, int(partition.partition))
+			consumerRef.assignments[assignmentName].cancel()
+			errGroup := consumerRef.assignments[assignmentName].errGroup
+			errGroup.Wait()
+		}
 		C.rd_kafka_assign(kafkaHandle, nil)
 	default:
 		C.rd_kafka_assign(kafkaHandle, nil)
@@ -112,12 +129,14 @@ func goStatsCb(kafkaHandle *C.rd_kafka_t, json *C.char, len C.size_t, opaque uns
 
 func NewConsumer(topics []string, goConf ConsumerConfiguration, processor MessageProcessor, errChan chan<- error) (*consumer, error) {
 	cMap := map[string]interface{}{}
+	assignments := map[string]assignment{}
 	consumer := &consumer{
-		handle:    &handle{},
-		topics:    topics,
-		processor: processor,
-		errChan:   errChan,
-		cMap:      cMap,
+		handle:      &handle{},
+		topics:      topics,
+		processor:   processor,
+		errChan:     errChan,
+		cMap:        cMap,
+		assignments: assignments,
 	}
 	cMap["consumer"] = consumer
 	cMap["stats"] = goConf.StatisticsCallback

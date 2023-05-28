@@ -7,6 +7,7 @@ package kafka
 extern void rebalanceCgo(rd_kafka_t *rk, rd_kafka_resp_err_t err, rd_kafka_topic_partition_list_t *partitions, void *opaque);
 extern void drCbCgo(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque);
 extern int statsCb(rd_kafka_t *rk, char *json, size_t json_len, void *opaque);
+extern void logCb(const rd_kafka_t *rk, int level, const char *fac, const char *buf);
 */
 import "C"
 import (
@@ -17,6 +18,7 @@ import (
 )
 
 type StatisticsCallback func(statsJSON string)
+type LogCallback func(level int, levelName string, message string)
 
 type SharedConfiguration struct {
 	Brokers []string
@@ -25,6 +27,7 @@ type SharedConfiguration struct {
 	LibKafkaConf       map[string]interface{}
 	StatisticsInterval int
 	StatisticsCallback StatisticsCallback
+	LogCallback        LogCallback
 }
 
 type ConsumerConfiguration struct {
@@ -111,6 +114,10 @@ func (conf *ConsumerConfiguration) setup(cMap map[string]interface{}) (*C.struct
 		C.rd_kafka_conf_set_stats_cb(cconf, (*[0]byte)(C.statsCb))
 	}
 
+	if conf.LogCallback != nil {
+		C.rd_kafka_conf_set_log_cb(cconf, (*[0]byte)(C.logCb))
+	}
+
 	return cconf, nil
 }
 
@@ -148,6 +155,10 @@ func (conf *ProducerConfiguration) setup(cMap map[string]interface{}) (*C.struct
 
 	if conf.StatisticsInterval > 0 && conf.StatisticsCallback != nil {
 		C.rd_kafka_conf_set_stats_cb(cconf, (*[0]byte)(C.statsCb))
+	}
+
+	if conf.LogCallback != nil {
+		C.rd_kafka_conf_set_log_cb(cconf, (*[0]byte)(C.logCb))
 	}
 
 	return cconf, nil

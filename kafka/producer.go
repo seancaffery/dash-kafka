@@ -46,6 +46,7 @@ func NewProducer(goConf ProducerConfiguration) (*producer, error) {
 		cMap:   cMap,
 	}
 	cMap["stats"] = goConf.StatisticsCallback
+	cMap["logger"] = goConf.LogCallback
 
 	conf, err := goConf.setup(cMap)
 	if err != nil {

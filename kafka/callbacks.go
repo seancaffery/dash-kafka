@@ -18,5 +18,10 @@ extern int goStatsCb(rd_kafka_t *rk, char *json, size_t json_len, void *opaque);
 int statsCb(rd_kafka_t *rk, char *json, size_t json_len, void *opaque) {
   return goStatsCb(rk, json, json_len, opaque);
 }
+
+extern void goLogCb(const rd_kafka_t *rk, int level, const char *fac, const char *buf);
+void logCb(const rd_kafka_t *rk, int level, const char *fac, const char *buf) {
+  goLogCb(rk, level, fac, buf);
+}
 */
 import "C"

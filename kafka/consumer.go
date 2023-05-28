@@ -127,6 +127,14 @@ func goStatsCb(kafkaHandle *C.rd_kafka_t, json *C.char, len C.size_t, opaque uns
 	return KAFKA_FREE_STATS_JSON
 }
 
+//export goLogCb
+func goLogCb(kafkaHandle *C.rd_kafka_t, level C.int, fac *C.char, buf *C.char) {
+	opaque := C.rd_kafka_opaque(kafkaHandle)
+	cMap := cgo.Handle(opaque).Value().(map[string]interface{})
+	logger := cMap["logger"].(LogCallback)
+	logger(int(level), C.GoString(fac), C.GoString(buf))
+}
+
 func NewConsumer(topics []string, goConf ConsumerConfiguration, processor MessageProcessor, errChan chan<- error) (*consumer, error) {
 	cMap := map[string]interface{}{}
 	assignments := map[string]assignment{}
@@ -140,6 +148,7 @@ func NewConsumer(topics []string, goConf ConsumerConfiguration, processor Messag
 	}
 	cMap["consumer"] = consumer
 	cMap["stats"] = goConf.StatisticsCallback
+	cMap["logger"] = goConf.LogCallback
 
 	conf, err := goConf.setup(cMap)
 	if err != nil {

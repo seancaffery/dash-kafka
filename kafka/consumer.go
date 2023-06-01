@@ -74,9 +74,19 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 	consumerRef := cMap["consumer"].(*consumer)
 	goPartitions := unsafe.Slice(partitions.elems, partitions.cnt)
 
+	rebalanceType := C.GoString(C.rd_kafka_rebalance_protocol(kafkaHandle))
+	cooperative := false
+	if rebalanceType == "COOPERATIVE" {
+		cooperative = true
+	}
+
 	switch cErr {
 	case C.RD_KAFKA_RESP_ERR__ASSIGN_PARTITIONS:
-		C.rd_kafka_assign(kafkaHandle, partitions)
+		if cooperative {
+			C.rd_kafka_incremental_assign(kafkaHandle, partitions)
+		} else {
+			C.rd_kafka_assign(kafkaHandle, partitions)
+		}
 
 		for _, partition := range goPartitions {
 			topic := C.GoString(partition.topic)
@@ -110,7 +120,12 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 			consumerRef.assignments[assignmentName].cancel()
 			consumerRef.assignments[assignmentName].errGroup.Wait()
 		}
-		C.rd_kafka_assign(kafkaHandle, nil)
+
+		if cooperative {
+			C.rd_kafka_incremental_unassign(kafkaHandle, partitions)
+		} else {
+			C.rd_kafka_assign(kafkaHandle, nil)
+		}
 	default:
 		C.rd_kafka_assign(kafkaHandle, nil)
 	}

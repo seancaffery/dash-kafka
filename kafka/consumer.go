@@ -59,7 +59,7 @@ type consumer struct {
 	errChan     chan<- error
 	ctx         context.Context
 	cMap        map[string]interface{}
-	assignments map[string]assignment
+	assignments map[string]*assignment
 }
 
 type handle struct {
@@ -87,7 +87,7 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 				Offset:    int64(partition.offset),
 			}
 			partitionCtx, partitionCancel := context.WithCancel(consumerRef.ctx)
-			assignment := assignment{
+			assignment := &assignment{
 				ctx:    partitionCtx,
 				cancel: partitionCancel,
 			}
@@ -108,8 +108,7 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 			topic := C.GoString(partition.topic)
 			assignmentName := fmt.Sprintf("%s%d", topic, int(partition.partition))
 			consumerRef.assignments[assignmentName].cancel()
-			errGroup := consumerRef.assignments[assignmentName].errGroup
-			errGroup.Wait()
+			consumerRef.assignments[assignmentName].errGroup.Wait()
 		}
 		C.rd_kafka_assign(kafkaHandle, nil)
 	default:
@@ -137,7 +136,7 @@ func goLogCb(kafkaHandle *C.rd_kafka_t, level C.int, fac *C.char, buf *C.char) {
 
 func NewConsumer(topics []string, goConf ConsumerConfiguration, processor MessageProcessor, errChan chan<- error) (*consumer, error) {
 	cMap := map[string]interface{}{}
-	assignments := map[string]assignment{}
+	assignments := map[string]*assignment{}
 	consumer := &consumer{
 		handle:      &handle{},
 		topics:      topics,

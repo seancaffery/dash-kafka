@@ -102,7 +102,7 @@ func goRebalance(kafkaHandle *C.rd_kafka_t, cErr C.rd_kafka_resp_err_t,
 				cancel: partitionCancel,
 			}
 			consumerRef.assignments[assignmentName] = assignment
-			processor := newConcurrentProcessor(partitionCtx, 3, consumerRef.processor)
+			processor := newConcurrentProcessor(3, consumerRef.processor)
 			assignment.errGroup.Go(func() error {
 				return consumerRef.readPartition(partitionCtx, tp, processor)
 			})

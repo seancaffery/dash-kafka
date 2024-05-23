@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/sync/errgroup"
 )
 
 func newMessage(message string) *ConsumerMessage {
@@ -92,17 +93,20 @@ func TestEnqueue(t *testing.T) {
 		expectedResult := []string{string(message1.Message), string(message2.Message), string(message3.Message)}
 		result := []string{}
 
-		go func() {
+		wg := errgroup.Group{}
+		wg.Go(func() error {
 			for msg := range processor.Serialization() {
 				result = append(result, string(msg.Message))
 			}
-		}()
+			return nil
+		})
 
 		processor.Enqueue(context.Background(), message1)
 		processor.Enqueue(context.Background(), message2)
 		processor.Enqueue(context.Background(), message3)
 		<-message3.Err
 		processor.Shutdown()
+		wg.Wait()
 
 		assert.True(t, processorCalled, "Expected message processor to be called")
 		assert.Equal(t, expectedResult, result)

@@ -18,7 +18,7 @@ func cToGoHeaders(cMessage *C.rd_kafka_message_t) (Headers, error) {
 		if cErr == C.RD_KAFKA_RESP_ERR__NOENT {
 			return nil, nil
 		}
-		return nil, fmt.Errorf(C.GoString(C.rd_kafka_err2str(cErr)))
+		return nil, fmt.Errorf("%s", C.GoString(C.rd_kafka_err2str(cErr)))
 	}
 
 	count := C.rd_kafka_header_cnt(cHeaders)

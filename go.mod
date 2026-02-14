@@ -1,10 +1,10 @@
 module github.com/seancaffery/dash-kafka
 
-go 1.22
+go 1.26
 
 require (
-	github.com/stretchr/testify v1.9.0
-	golang.org/x/sync v0.7.0
+	github.com/stretchr/testify v1.11.1
+	golang.org/x/sync v0.19.0
 )
 
 require (

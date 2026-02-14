@@ -236,7 +236,7 @@ func (c *consumer) readPartition(ctx context.Context, tp TopicPartition, process
 				cmessage := C.rd_kafka_event_message_next(event)
 				if cmessage != nil {
 					if cmessage.err != C.RD_KAFKA_RESP_ERR_NO_ERROR {
-						c.errChan <- fmt.Errorf(C.GoString(C.rd_kafka_err2str(cmessage.err)))
+						c.errChan <- fmt.Errorf("%s", C.GoString(C.rd_kafka_err2str(cmessage.err)))
 						C.rd_kafka_message_destroy(cmessage)
 						continue
 					}
@@ -268,7 +268,7 @@ func (c *consumer) Start(ctx context.Context) error {
 	if cErr != C.RD_KAFKA_RESP_ERR_NO_ERROR {
 		C.rd_kafka_topic_partition_list_destroy(subscription)
 		C.rd_kafka_destroy(c.handle.client)
-		return fmt.Errorf(C.GoString(C.rd_kafka_err2str(cErr)))
+		return fmt.Errorf("%s", C.GoString(C.rd_kafka_err2str(cErr)))
 	}
 
 	C.rd_kafka_topic_partition_list_destroy(subscription)

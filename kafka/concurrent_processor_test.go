@@ -2,7 +2,9 @@ package kafka
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
@@ -19,6 +21,14 @@ func newMessageKey(key string) *ConsumerMessage {
 	return &ConsumerMessage{
 		Key: []byte(key),
 		Err: make(chan error),
+	}
+}
+
+func newMessageKeyValue(key, message string) *ConsumerMessage {
+	return &ConsumerMessage{
+		Key:     []byte(key),
+		Message: []byte(message),
+		Err:     make(chan error),
 	}
 }
 
@@ -116,25 +126,39 @@ func TestEnqueue(t *testing.T) {
 		processorCalled := false
 
 		processedMessageKeys := []string{}
+		processedMessageValues := []string{}
+		mu := sync.Mutex{}
 		mp := MessageProcessorFunc(func(ctx context.Context, message ConsumerMessage) error {
+			mu.Lock()
 			processorCalled = true
 			processedMessageKeys = append(processedMessageKeys, string(message.Key))
+			processedMessageValues = append(processedMessageValues, string(message.Message))
+			mu.Unlock()
 			return nil
 		})
 
 		processor := newConcurrentProcessor(2, mp)
 		processor.Start(context.Background())
 
-		message1 := newMessageKey("one")
-		message2 := newMessageKey("one")
-		message3 := newMessageKey("one")
-		message4 := newMessageKey("two")
-		expectedResult := []string{string(message1.Key), string(message4.Key), string(message2.Key), string(message3.Key)}
+		message1 := newMessageKeyValue("one", "one_1")
+		message2 := newMessageKeyValue("one", "one_2")
+		message3 := newMessageKeyValue("one", "one_3")
+		message4 := newMessageKeyValue("two", "two_1")
+		expectedKeys := []string{string(message1.Key), string(message4.Key), string(message2.Key), string(message3.Key)}
 		result := []string{}
+		sameKeyResult := []string{}
+		allValResult := []string{}
 
 		go func() {
 			for msg := range processor.Serialization() {
+				time.Sleep(10 * time.Millisecond)
+				mu.Lock()
 				result = append(result, string(msg.Key))
+				if string(msg.Key) == "one" {
+					sameKeyResult = append(sameKeyResult, string(msg.Message))
+				}
+				allValResult = append(allValResult, string(msg.Message))
+				mu.Unlock()
 			}
 		}()
 		expectedSerializedResult := []string{string(message1.Key), string(message2.Key), string(message2.Key), string(message4.Key)}
@@ -147,10 +171,16 @@ func TestEnqueue(t *testing.T) {
 		<-message2.Err
 		<-message3.Err
 		<-message4.Err
+		time.Sleep(200 * time.Millisecond)
 		processor.Shutdown()
 
+		mu.Lock()
 		assert.True(t, processorCalled, "Expected message processor to be called")
 		assert.Equal(t, expectedSerializedResult, result)
-		assert.Equal(t, expectedResult, processedMessageKeys)
+		assert.Equal(t, expectedKeys, processedMessageKeys)
+
+		expectedSameKeyResult := []string{string(message1.Message), string(message2.Message), string(message3.Message)}
+		assert.Equal(t, expectedSameKeyResult, sameKeyResult)
+		mu.Unlock()
 	})
 }

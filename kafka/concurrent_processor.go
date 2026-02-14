@@ -65,6 +65,7 @@ func (p *concurrentProcessor) Start(ctx context.Context) error {
 
 func (p *concurrentProcessor) Shutdown() error {
 	p.cancel()
+	p.wg.Wait()
 	close(p.serialization)
 	close(p.queue)
 	close(p.done)
@@ -96,13 +97,38 @@ func (p *concurrentProcessor) Enqueue(ctx context.Context, message *ConsumerMess
 }
 
 func (p *concurrentProcessor) startWork(ctx context.Context) {
-	wip := map[string]*struct{}{}
+	wip := map[string]struct{}{}
+	waiting := map[string][]*work{}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case work := <-p.done:
-			delete(wip, string(work.message.Key))
+
+		case doneWork, ok := <-p.done:
+			if !ok {
+				continue
+			}
+
+			key := doneWork.message.Key
+			if key == nil || string(key) == "" {
+				continue
+			}
+
+			k := string(key)
+			delete(wip, k)
+
+			if q, exists := waiting[k]; exists && len(q) > 0 {
+				next := q[0]
+				if len(q) == 1 {
+					delete(waiting, k)
+				} else {
+					waiting[k] = q[1:]
+				}
+				wip[k] = struct{}{}
+				p.ready <- next
+			}
+
 		case work, ok := <-p.queue:
 			if !ok {
 				return
@@ -114,12 +140,13 @@ func (p *concurrentProcessor) startWork(ctx context.Context) {
 				continue
 			}
 
-			if _, ok := wip[string(key)]; ok {
-				p.queue <- work
+			k := string(key)
+			if _, inFlight := wip[k]; inFlight {
+				waiting[k] = append(waiting[k], work)
 				continue
 			}
 
-			wip[string(key)] = nil
+			wip[k] = struct{}{}
 			p.ready <- work
 		}
 	}
@@ -140,7 +167,11 @@ func (worker *worker) start(ctx context.Context) error {
 		case <-ctx.Done():
 			worker.wg.Done()
 			return nil
-		case message := <-worker.messages:
+		case message, ok := <-worker.messages:
+			if !ok {
+				worker.wg.Done()
+				return nil
+			}
 			err := worker.process(ctx, message)
 			if err != nil {
 				worker.wg.Done()
@@ -152,6 +183,7 @@ func (worker *worker) start(ctx context.Context) error {
 
 func (worker *worker) process(ctx context.Context, work *work) error {
 	if ctx.Err() != nil {
+		close(work.message.Err)
 		return nil
 	}
 	err := worker.processFunc(work.ctx, *work.message)
